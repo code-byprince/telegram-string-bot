@@ -1,65 +1,68 @@
 """
-Configuration management for the bot
+Central configuration module.
+
+All runtime configuration is loaded from environment variables (via a .env
+file locally, or Render's environment variable dashboard in production).
+Nothing sensitive is hard-coded here.
 """
 
 import os
-from typing import List
 from dotenv import load_dotenv
 
 load_dotenv()
 
 
+def _parse_admin_ids(raw: str) -> list[int]:
+    ids = []
+    for part in raw.split(","):
+        part = part.strip()
+        if part.isdigit():
+            ids.append(int(part))
+    return ids
+
+
 class Config:
-    """Bot configuration from environment variables"""
-    
-    # Telegram Bot Configuration
-    BOT_TOKEN = os.getenv("BOT_TOKEN")
-    if not BOT_TOKEN:
-        print("❌ ERROR: BOT_TOKEN is required!")
-        print("Please set BOT_TOKEN in environment variables")
-        raise ValueError("BOT_TOKEN is required")
-    
-    # Admin Configuration - Handle empty case
-    admin_ids_str = os.getenv("ADMIN_IDS", "")
-    if admin_ids_str:
-        ADMIN_IDS = [int(admin_id.strip()) for admin_id in admin_ids_str.split(",") if admin_id.strip()]
-    else:
-        ADMIN_IDS = []
-        print("⚠️ WARNING: No ADMIN_IDS set!")
-    
-    # Rate Limiting
-    RATE_LIMIT = int(os.getenv("RATE_LIMIT", "3"))
-    RATE_LIMIT_PERIOD = int(os.getenv("RATE_LIMIT_PERIOD", "300"))
-    
-    # Timeout Settings
-    SESSION_TIMEOUT = int(os.getenv("SESSION_TIMEOUT", "300"))
-    
-    # Logging
-    LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
-    
-    # Flask Health Check
-    PORT = int(os.getenv("PORT", "5000"))
-    HOST = os.getenv("HOST", "0.0.0.0")
-    
-    # API Configuration
-    API_ID = int(os.getenv("API_ID"))
-API_HASH = os.getenv("API_HASH")
-    
+    # --- Bot's own Telegram credentials (used to run the bot itself) ---
+    BOT_TOKEN: str = os.getenv("BOT_TOKEN", "")
+    API_ID: int = int(os.getenv("API_ID", "0") or "0")
+    API_HASH: str = os.getenv("API_HASH", "")
+
+    # --- Admin access ---
+    ADMIN_IDS: list[int] = _parse_admin_ids(os.getenv("ADMIN_IDS", ""))
+
+    # --- Web server (Render health check) ---
+    PORT: int = int(os.getenv("PORT", "8080"))
+
+    # --- Behaviour tuning ---
+    SESSION_TIMEOUT_SECONDS: int = int(os.getenv("SESSION_TIMEOUT_SECONDS", "300"))
+    RATE_LIMIT_SECONDS: int = int(os.getenv("RATE_LIMIT_SECONDS", "60"))
+    COMMAND_RATE_LIMIT_SECONDS: int = int(os.getenv("COMMAND_RATE_LIMIT_SECONDS", "2"))
+    MAX_OTP_ATTEMPTS: int = int(os.getenv("MAX_OTP_ATTEMPTS", "3"))
+    MAX_PASSWORD_ATTEMPTS: int = int(os.getenv("MAX_PASSWORD_ATTEMPTS", "3"))
+
+    # --- Logging ---
+    LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
+
+    # --- Misc ---
+    BOT_NAME: str = os.getenv("BOT_NAME", "String Session Generator")
+    SUPPORT_USERNAME: str = os.getenv("SUPPORT_USERNAME", "")
+
     @classmethod
-    def is_admin(cls, user_id: int) -> bool:
-        """Check if a user is an admin"""
-        return user_id in cls.ADMIN_IDS
-    
-    @classmethod
-    def get_config_dict(cls) -> dict:
-        """Get all configuration as a dictionary (hiding sensitive data)"""
-        return {
-            "BOT_TOKEN": "***" if cls.BOT_TOKEN else None,
-            "ADMIN_IDS": cls.ADMIN_IDS,
-            "RATE_LIMIT": cls.RATE_LIMIT,
-            "RATE_LIMIT_PERIOD": cls.RATE_LIMIT_PERIOD,
-            "SESSION_TIMEOUT": cls.SESSION_TIMEOUT,
-            "LOG_LEVEL": cls.LOG_LEVEL,
-            "PORT": cls.PORT,
-            "HOST": cls.HOST,
-        }
+    def validate(cls) -> None:
+        """Raise a clear error early if required configuration is missing."""
+        missing = []
+        if not cls.BOT_TOKEN:
+            missing.append("BOT_TOKEN")
+        if not cls.API_ID:
+            missing.append("API_ID")
+        if not cls.API_HASH:
+            missing.append("API_HASH")
+        if not cls.ADMIN_IDS:
+            missing.append("ADMIN_IDS")
+
+        if missing:
+            raise RuntimeError(
+                "Missing required environment variable(s): "
+                + ", ".join(missing)
+                + ". Check your .env file (see .env.example)."
+            )
