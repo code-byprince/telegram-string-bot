@@ -1,0 +1,29 @@
+# Telegram String Session Generator Bot
+
+A production-ready Telegram bot for generating Pyrogram string sessions securely.
+
+## 🚀 Features
+
+- 🔐 Generate Pyrogram string sessions securely
+- 📱 Support for phone number, OTP, and 2FA
+- 🛡️ Rate limiting and session timeout protection
+- 👥 Admin commands (stats, broadcast, users)
+- 🔒 No storage of sensitive data
+- 📊 Basic analytics and logging
+- 🌐 Flask health check for deployment
+- 🚀 One-click deployment on Render
+
+## 📋 Prerequisites
+
+- Python 3.11+
+- Telegram Bot Token (from @BotFather)
+- Telegram API ID and Hash (from https://my.telegram.org)
+
+## 🛠️ Installation
+
+### Local Development
+
+1. Clone the repository:
+```bash
+git clone https://github.com/yourusername/telegram-string-generator-bot.git
+cd telegram-string-generator-bot
