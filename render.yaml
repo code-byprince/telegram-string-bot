@@ -1,6 +1,36 @@
 services:
   - type: web
-    name: telegram-string-bot
+    name: telegram-session-generator-bot
     env: python
+    plan: free
+    region: oregon
     buildCommand: pip install -r requirements.txt
     startCommand: python main.py
+    healthCheckPath: /health
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: API_ID
+        sync: false
+      - key: API_HASH
+        sync: false
+      - key: ADMIN_IDS
+        sync: false
+      - key: PORT
+        value: 8080
+      - key: SESSION_TIMEOUT_SECONDS
+        value: 300
+      - key: RATE_LIMIT_SECONDS
+        value: 60
+      - key: COMMAND_RATE_LIMIT_SECONDS
+        value: 2
+      - key: MAX_OTP_ATTEMPTS
+        value: 3
+      - key: MAX_PASSWORD_ATTEMPTS
+        value: 3
+      - key: LOG_LEVEL
+        value: INFO
+      - key: BOT_NAME
+        value: String Session Generator
+      - key: SUPPORT_USERNAME
+        sync: false
