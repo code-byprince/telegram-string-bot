@@ -1,32 +1,6 @@
 services:
   - type: web
-    name: telegram-string-generator-bot
-    runtime: python
-    repo: https://github.com/yourusername/telegram-string-bot
-    branch: main
-    plan: free
-    envVars:
-      - key: BOT_TOKEN
-        sync: false
-      - key: ADMIN_IDS
-        sync: false
-      - key: API_ID
-        value: 6
-      - key: API_HASH
-        value: your_api_hash_here
-      - key: RATE_LIMIT
-        value: 3
-      - key: RATE_LIMIT_PERIOD
-        value: 300
-      - key: SESSION_TIMEOUT
-        value: 300
-      - key: LOG_LEVEL
-        value: INFO
-      - key: PORT
-        value: 5000
-      - key: HOST
-        value: 0.0.0.0
+    name: telegram-string-bot
+    env: python
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn --worker-class sync --workers 1 --bind 0.0.0.0:$PORT web.app:app
-    healthCheckPath: /health
-    autoDeploy: true
+    startCommand: python main.py
