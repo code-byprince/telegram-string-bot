@@ -1,640 +1,138 @@
-```markdown
-<div align="center">
-  <img src="https://readme-typing-svg.herokuapp.com?font=Fira+Code&weight=600&size=32&duration=3000&pause=500&color=2E9AFE&center=true&vCenter=true&random=false&width=600&height=70&lines=🤖+Telegram+String+Generator+Bot;⚡+Secure+%26+Fast+Session+Generation;🚀+Production+Ready+%26+Deployed+on+Render" alt="Typing SVG" />
-</div>
+# 🔐 Telegram String Session Generator Bot
 
-<br/>
+A secure and user-friendly Telegram bot that allows users to generate their own **Pyrogram String Session** safely.
 
-<div align="center">
-  
-[![GitHub stars](https://img.shields.io/github/stars/yourusername/telegram-string-generator-bot?style=for-the-badge&logo=github&color=gold)](https://github.com/yourusername/telegram-string-generator-bot/stargazers)
-[![GitHub forks](https://img.shields.io/github/forks/yourusername/telegram-string-generator-bot?style=for-the-badge&logo=github&color=blue)](https://github.com/yourusername/telegram-string-generator-bot/network)
-[![GitHub issues](https://img.shields.io/github/issues/yourusername/telegram-string-generator-bot?style=for-the-badge&logo=github&color=red)](https://github.com/yourusername/telegram-string-generator-bot/issues)
-[![Python Version](https://img.shields.io/badge/Python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
-[![Pyrogram](https://img.shields.io/badge/Pyrogram-2.0.106-00BFFF?style=for-the-badge&logo=telegram&logoColor=white)](https://docs.pyrogram.org/)
-[![Flask](https://img.shields.io/badge/Flask-3.0.3-000000?style=for-the-badge&logo=flask&logoColor=white)](https://flask.palletsprojects.com/)
-[![Render](https://img.shields.io/badge/Render-Deployed-46E3B7?style=for-the-badge&logo=render&logoColor=white)](https://render.com/)
-[![License](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge&logo=opensourceinitiative&logoColor=white)](LICENSE)
+## ✨ Features
 
-</div>
-
-<br/>
-
-<div align="center">
-  
-### 🚀 **Deploy with One Click**
-
-[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy)
-
-</div>
+- 🔑 Generate Pyrogram String Sessions
+- 📱 Phone Number Verification
+- 🔢 OTP Verification
+- 🛡️ Two-Step Verification (2FA) Support
+- ⚡ Fast & Secure Session Generation
+- ❌ Cancel Current Process
+- ⏱️ Session Timeout Handling
+- 🚫 Rate Limiting
+- 📊 Admin Statistics
+- 📢 Broadcast Support
+- 📝 Clean & Structured Logging
+- ☁️ Render Ready
+- 🐍 Python 3.11+
+- 🚀 GitHub Ready
 
 ---
 
-## 📖 **Table of Contents**
+## 📂 Project Structure
 
-- [✨ Features](#-features)
-- [🎯 Demo](#-demo)
-- [📋 Prerequisites](#-prerequisites)
-- [🛠️ Installation](#️-installation)
-- [🚀 Deployment](#-deployment)
-- [🤖 Commands](#-commands)
-- [🔄 Workflow Diagram](#-workflow-diagram)
-- [📊 Architecture](#-architecture)
-- [🔒 Security](#-security)
-- [📁 Project Structure](#-project-structure)
-- [🐛 Troubleshooting](#-troubleshooting)
-- [📝 Environment Variables](#-environment-variables)
-- [🤝 Contributing](#-contributing)
-- [📄 License](#-license)
-- [🙏 Support](#-support)
-
----
-
-## ✨ **Features**
-
-<div align="center">
-
-| Feature | Description | Status |
-|---------|-------------|--------|
-| 🔐 **String Generation** | Generate Pyrogram string sessions securely | ✅ |
-| 📱 **OTP Verification** | Support for phone number & OTP | ✅ |
-| 🔑 **2FA Support** | Two-factor authentication handling | ✅ |
-| 🛡️ **Rate Limiting** | Prevent abuse with smart limits | ✅ |
-| ⏱️ **Session Timeout** | Auto-cleanup inactive users | ✅ |
-| 👥 **Admin Panel** | Stats, users, broadcast commands | ✅ |
-| 🗑️ **Auto Deletion** | Delete sensitive messages after 10 mins | ✅ |
-| 🔒 **No Storage** | Never store credentials or sessions | ✅ |
-| 📊 **Analytics** | Track users, generations, failures | ✅ |
-| 🚀 **Ready to Deploy** | One-click deployment on Render | ✅ |
-
-</div>
-
----
-
-## 🎯 **Demo**
-
-<div align="center">
-
-### Bot Interaction Flow
-
-```mermaid
-sequenceDiagram
-    participant User
-    participant Bot
-    participant TelegramAPI
-    
-    User->>Bot: /generate
-    Bot->>User: Enter API_ID
-    User->>Bot: API_ID
-    Bot->>User: Enter API_HASH
-    User->>Bot: API_HASH
-    Bot->>User: Enter Phone Number
-    User->>Bot: +1234567890
-    Bot->>TelegramAPI: Send OTP
-    TelegramAPI-->>Bot: OTP Sent
-    Bot->>User: Enter OTP
-    User->>Bot: 123456
-    Bot->>TelegramAPI: Verify OTP
-    
-    alt 2FA Enabled
-        TelegramAPI-->>Bot: Password Required
-        Bot->>User: Enter 2FA Password
-        User->>Bot: Password
-        Bot->>TelegramAPI: Verify Password
-    end
-    
-    TelegramAPI-->>Bot: Authentication Success
-    Bot->>Bot: Generate String Session
-    Bot->>User: ✅ String Session
-    Note over Bot,User: Message auto-deleted after 10 mins
+```
+.
+├── bot.py
+├── config.py
+├── handlers/
+├── services/
+├── utils/
+├── database/
+├── app.py
+├── requirements.txt
+├── runtime.txt
+├── render.yaml
+├── .env.example
+├── README.md
+└── LICENSE
 ```
 
-</div>
+---
+
+## ⚙️ Requirements
+
+- Python 3.11+
+- Pyrogram
+- TgCrypto
+- Flask
+- python-dotenv
 
 ---
 
-📋 Prerequisites
+## 🚀 Installation
 
-<div align="center">
-
-What You Need
-
-Item Description How to Get
-🤖 Bot Token Telegram Bot Token @BotFather
-👤 User ID Your Telegram ID @userinfobot
-🔑 API ID Telegram API ID my.telegram.org
-📦 GitHub Version Control GitHub
-☁️ Render Hosting Platform Render
-
-</div>
-
----
-
-🛠️ Installation
-
-<details>
-<summary><b>📥 Click to Expand Installation Guide</b></summary>
-
-Local Development
+### Clone Repository
 
 ```bash
-# Clone the repository
-git clone https://github.com/yourusername/telegram-string-generator-bot.git
-cd telegram-string-generator-bot
+git clone https://github.com/yourusername/your-repository.git
+cd your-repository
+```
 
-# Create virtual environment
-python -m venv venv
+### Install Dependencies
 
-# Activate virtual environment
-# On Linux/Mac:
-source venv/bin/activate
-# On Windows:
-venv\Scripts\activate
-
-# Install dependencies
+```bash
 pip install -r requirements.txt
-
-# Create environment file
-cp .env.example .env
-
-# Edit .env with your credentials
-nano .env
-
-# Run the bot
-python main.py
 ```
 
-Docker Installation
+### Configure Environment
+
+Rename:
+
+```
+.env.example
+```
+
+to
+
+```
+.env
+```
+
+and configure your values.
+
+---
+
+## ▶️ Run
 
 ```bash
-# Build Docker image
-docker build -t telegram-string-bot .
-
-# Run container
-docker run -d \
-  --name telegram-bot \
-  -p 5000:5000 \
-  --env-file .env \
-  telegram-string-bot
-
-# Check logs
-docker logs -f telegram-bot
-```
-
-</details>
-
----
-
-🚀 Deployment
-
-<div align="center">
-
-🌟 Deploy on Render (Recommended)
-
-https://render.com/images/deploy-to-render-button.svg
-
-</div>
-
-<details>
-<summary><b>📦 Click for Step-by-Step Deployment Guide</b></summary>
-
-Manual Deployment Steps
-
-1. Push Code to GitHub
-
-```bash
-git add .
-git commit -m "Initial commit"
-git push -u origin main
-```
-
-1. Deploy on Render
-   · Go to Render Dashboard
-   · Click "New +" → "Blueprint"
-   · Connect your GitHub repository
-   · Render will auto-detect render.yaml
-   · Add environment variables
-   · Click "Apply"
-2. Environment Variables
-   Set these in Render Dashboard:
-
-Variable Value
-BOT_TOKEN 7584930211:AAGhIjKlMnOpQrStUvWxYz1234567890
-ADMIN_IDS 123456789
-API_ID 6
-API_HASH your_api_hash_here
-
-1. Deploy
-   · Click "Manual Deploy"
-   · Select "Deploy latest commit"
-   · Wait for deployment to complete
-
-</details>
-
----
-
-🤖 Commands
-
-<div align="center">
-
-User Commands
-
-Command Description Example
-/start Welcome message /start
-/generate Start session generation /generate
-/cancel Cancel current operation /cancel
-
-Admin Commands
-
-Command Description Example
-/stats View bot statistics /stats
-/users List all users /users
-/broadcast Send message to all users /broadcast Hello everyone!
-
-</div>
-
----
-
-🔄 Workflow Diagram
-
-<div align="center">
-
-Complete Workflow
-
-```mermaid
-graph TD
-    A[Start] --> B{User sends /generate}
-    B --> C[Step 1: Enter API_ID]
-    C --> D{Validate API_ID}
-    D -->|Invalid| C
-    D -->|Valid| E[Step 2: Enter API_HASH]
-    E --> F{Validate API_HASH}
-    F -->|Invalid| E
-    F -->|Valid| G[Step 3: Enter Phone Number]
-    G --> H{Validate Phone}
-    H -->|Invalid| G
-    H -->|Valid| I[Send OTP]
-    I --> J[Step 4: Enter OTP]
-    J --> K{Verify OTP}
-    K -->|Invalid| J
-    K -->|Expired| G
-    K -->|Valid| L{2FA Enabled?}
-    L -->|Yes| M[Step 5: Enter 2FA Password]
-    M --> N{Verify Password}
-    N -->|Invalid| M
-    N -->|Valid| O[Generate String Session]
-    L -->|No| O
-    O --> P[Send Session to User]
-    P --> Q[Auto-Delete after 10 mins]
-    Q --> R[End]
-    
-    style A fill:#f9f,stroke:#333,stroke-width:2px
-    style O fill:#9f9,stroke:#333,stroke-width:2px
-    style P fill:#9f9,stroke:#333,stroke-width:2px
-    style R fill:#f9f,stroke:#333,stroke-width:2px
-```
-
-</div>
-
----
-
-📊 Architecture
-
-<div align="center">
-
-System Architecture
-
-```mermaid
-graph LR
-    subgraph "User"
-        A[Telegram User]
-    end
-    
-    subgraph "Bot Service"
-        B[Telegram Bot]
-        C[Flask Web Server]
-    end
-    
-    subgraph "Backend"
-        D[Session Manager]
-        E[Rate Limiter]
-        F[Input Validator]
-    end
-    
-    subgraph "Telegram"
-        G[Telegram API]
-    end
-    
-    A -->|Commands| B
-    B -->|Process| D
-    D -->|Validate| F
-    F -->|Check| E
-    B -->|Send| A
-    C -->|Health Check| H[Render]
-    B -->|API Calls| G
-    G -->|Response| B
-    
-    style A fill:#4CAF50,stroke:#333,stroke-width:2px,color:#fff
-    style B fill:#2196F3,stroke:#333,stroke-width:2px,color:#fff
-    style C fill:#FF9800,stroke:#333,stroke-width:2px,color:#fff
-    style G fill:#9C27B0,stroke:#333,stroke-width:2px,color:#fff
-```
-
-</div>
-
----
-
-🔒 Security
-
-<div align="center">
-
-Security Features
-
-Feature Description Status
-🔐 No Storage Never store API credentials, OTPs, or sessions ✅
-🛡️ Rate Limiting Max 3 generations per user per 5 minutes ✅
-⏱️ Session Timeout Auto-cancel after 5 minutes of inactivity ✅
-🗑️ Auto Deletion Delete sensitive messages after 10 minutes ✅
-🔑 Secure State In-memory state management ✅
-📝 Secure Logging No sensitive data in logs ✅
-🛡️ Input Validation Validate all user inputs ✅
-🔒 HTTPS Secure communication with Telegram ✅
-
-Data Flow Security
-
-```mermaid
-flowchart LR
-    A[User Input] --> B{Input Validation}
-    B -->|Valid| C[Process]
-    B -->|Invalid| D[Reject]
-    C --> E[Generate Session]
-    E --> F[Send to User]
-    F --> G[Auto Delete after 10 mins]
-    C --> H[Clear Memory]
-    H --> I[Complete]
-    
-    style A fill:#FF6B6B,stroke:#333,stroke-width:2px
-    style F fill:#51CF66,stroke:#333,stroke-width:2px
-    style G fill:#FFD93D,stroke:#333,stroke-width:2px
-    style H fill:#4DABF7,stroke:#333,stroke-width:2px
-```
-
-</div>
-
----
-
-📁 Project Structure
-
-```bash
-telegram-string-bot/
-├── 📁 app/
-│   ├── 📁 handlers/          # Command handlers
-│   │   ├── 🐍 __init__.py
-│   │   ├── 🐍 start.py      # /start command
-│   │   ├── 🐍 generate.py   # Session generation logic
-│   │   ├── 🐍 admin.py      # Admin commands
-│   │   └── 🐍 cancel.py     # /cancel command
-│   ├── 📁 models/            # Data models
-│   │   ├── 🐍 __init__.py
-│   │   └── 🐍 user_state.py # User state management
-│   ├── 📁 utils/             # Utilities
-│   │   ├── 🐍 __init__.py
-│   │   ├── 🐍 logger.py     # Logging configuration
-│   │   ├── 🐍 validators.py # Input validation
-│   │   └── 🐍 state_manager.py # Session management
-│   ├── 🐍 __init__.py
-│   ├── 🐍 bot.py            # Bot initialization
-│   └── 🐍 config.py         # Configuration management
-├── 📁 web/
-│   └── 🐍 app.py            # Flask web server
-├── 📄 .env.example          # Environment variables template
-├── 📄 .gitignore           # Git ignore file
-├── 📄 README.md            # Documentation
-├── 📄 render.yaml          # Render deployment config
-├── 📄 requirements.txt     # Python dependencies
-├── 📄 runtime.txt          # Python version
-├── 📄 Procfile             # Process file
-├── 📄 Dockerfile           # Docker configuration
-└── 🐍 main.py              # Main entry point
+python bot.py
 ```
 
 ---
 
-🐛 Troubleshooting
+## ☁️ Deploy on Render
 
-<details>
-<summary><b>🔧 Click for Common Issues & Solutions</b></summary>
-
-Issue 1: Bot Not Starting
-
-```bash
-❌ ERROR: BOT_TOKEN is required!
-```
-
-Solution: Set BOT_TOKEN in environment variables.
+1. Push the project to GitHub.
+2. Create a new Web Service on Render.
+3. Connect your GitHub repository.
+4. Add your environment variables.
+5. Deploy.
 
 ---
 
-Issue 2: Admin Commands Not Working
+## 🔒 Security
 
-```bash
-⛔ You are not authorized to use this command.
-```
-
-Solution: Add your Telegram ID to ADMIN_IDS.
-
----
-
-Issue 3: Rate Limit Exceeded
-
-```bash
-⚠️ Rate Limit Exceeded
-```
-
-Solution: Wait 5 minutes or increase RATE_LIMIT.
+- No permanent storage of generated String Sessions.
+- Sensitive user information is never logged.
+- Secure OTP & 2FA handling.
+- Automatic cleanup of temporary data.
 
 ---
 
-Issue 4: Invalid API Credentials
+## 📜 Disclaimer
 
-```bash
-❌ Invalid API_ID or API_HASH
-```
-
-Solution: Get valid credentials from my.telegram.org.
+This project is intended **only for users to generate a session for their own Telegram account**. Users are responsible for keeping their generated String Session private. Misuse of this project is the sole responsibility of the user.
 
 ---
 
-Issue 5: Session Timeout
+## 🛠 Built With
 
-```bash
-⏳ Session expired
-```
-
-Solution: Start again with /generate.
-
----
-
-Issue 6: Flood Wait
-
-```bash
-⏳ Flood Wait: 30 seconds
-```
-
-Solution: Wait for the specified time before retrying.
-
-</details>
+- Python
+- Pyrogram
+- TgCrypto
+- Flask
 
 ---
 
-📝 Environment Variables
+## 📄 License
 
-<div align="center">
-
-Complete Variable List
-
-Variable Description Required Default Example
-BOT_TOKEN Telegram Bot Token ✅ Yes - 1234567890:ABC...
-ADMIN_IDS Admin User IDs ✅ Yes - 123456789
-API_ID Telegram API ID ❌ No 6 123456
-API_HASH Telegram API Hash ❌ No your_api_hash_here abc123...
-RATE_LIMIT Max generations per user ❌ No 3 5
-RATE_LIMIT_PERIOD Rate limit period (seconds) ❌ No 300 600
-SESSION_TIMEOUT Session timeout (seconds) ❌ No 300 600
-LOG_LEVEL Logging level ❌ No INFO DEBUG
-PORT Web server port ❌ No 5000 8080
-HOST Web server host ❌ No 0.0.0.0 127.0.0.1
-
-</div>
+This project is licensed under the MIT License.
 
 ---
 
-🤝 Contributing
+## ⭐ Support
 
-<div align="center">
-
-Contribution Process
-
-```mermaid
-flowchart LR
-    A[Fork Repo] --> B[Create Branch]
-    B --> C[Make Changes]
-    C --> D[Test Changes]
-    D --> E[Commit Changes]
-    E --> F[Push to Fork]
-    F --> G[Create PR]
-    G --> H[Review]
-    H --> I[Merge]
-    
-    style A fill:#FF6B6B,stroke:#333,stroke-width:2px
-    style G fill:#51CF66,stroke:#333,stroke-width:2px
-    style I fill:#4DABF7,stroke:#333,stroke-width:2px
-```
-
-</div>
-
-Guidelines
-
-· Follow PEP 8 style guide
-· Add docstrings to new functions
-· Update README for new features
-· Test before submitting PR
-
----
-
-📄 License
-
-<div align="center">
-
-MIT License
-
-```
-MIT License
-
-Copyright (c) 2024 Your Name
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-```
-
-</div>
-
----
-
-🙏 Support
-
-<div align="center">
-
-Get Help
-
-Platform Link
-📧 Email princehelpeddesk@gmail.com
-🐛 Issues GitHub Issues
-💬 Telegram @PrinceCreatorHub
-📖 Documentation GitHub Wiki
-
-Show Your Support
-
-https://img.shields.io/github/stars/yourusername/telegram-string-generator-bot?style=social
-https://img.shields.io/twitter/follow/yourusername?style=social
-
-</div>
-
----
-
-<div align="center">
-
-🏆 Badges
-
-https://img.shields.io/badge/python-3.11+-blue.svg
-https://img.shields.io/badge/pyrogram-2.0.106-green.svg
-https://img.shields.io/badge/flask-3.0.3-red.svg
-https://img.shields.io/badge/render-ready-blueviolet.svg
-https://img.shields.io/badge/license-MIT-yellow.svg
-https://img.shields.io/badge/code%20style-pep8-orange.svg
-https://img.shields.io/badge/security-A+-brightgreen.svg
-https://img.shields.io/badge/maintained-yes-green.svg
-https://img.shields.io/badge/PRs-welcome-brightgreen.svg
-
----
-
-✨ Made with ❤️ by Prince Kumar Saw 
-
-⭐ Don't forget to star this repo if you like it!
-
----
-
-</div>
-```
-
----
-
-🎯 Key Features of this README:
-
-✅ Animated Typing SVG - Dynamic header with typing effect
-✅ Professional Badges - GitHub stars, forks, issues, versions
-✅ Mermaid Diagrams - Sequence diagrams, flowcharts, architecture
-✅ Beautiful Emojis - Visual appeal and better readability
-✅ Collapsible Sections - Clean and organized content
-✅ Color Coding - Syntax highlighting and colored badges
-✅ Responsive Design - Works on all devices
-✅ Table Formatting - Clear information presentation
-✅ Code Blocks - With proper syntax highlighting
-✅ Button Styling - One-click deployment button
-✅ Progress Bars - Feature completion status
-✅ Contributing Guide - With flowchart
+If you find this project useful, consider giving it a ⭐ on GitHub.
