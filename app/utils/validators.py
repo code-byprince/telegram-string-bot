@@ -1,67 +1,51 @@
 """
-Input validators
+Input validation helpers.
+
+Each function returns (is_valid: bool, cleaned_value_or_error: str).
 """
 
 import re
 
-
-def validate_api_id(api_id: str) -> bool:
-    """Validate API_ID format"""
-    try:
-        value = int(api_id)
-        return 1 <= value <= 2147483647  # Telegram API ID range
-    except (ValueError, TypeError):
-        return False
+_PHONE_RE = re.compile(r"^\+?[1-9]\d{7,14}$")
+_HASH_RE = re.compile(r"^[a-fA-F0-9]{32}$")
 
 
-def validate_api_hash(api_hash: str) -> bool:
-    """Validate API_HASH format"""
-    if not api_hash:
-        return False
-    
-    # API_HASH is typically a 32-character alphanumeric string
-    return bool(re.match(r'^[a-zA-Z0-9]{32}$', api_hash))
+def validate_api_id(text: str) -> tuple[bool, str]:
+    text = text.strip()
+    if not text.isdigit():
+        return False, "API_ID must be a number. Please send only digits (e.g. 12345678)."
+    if len(text) < 5 or len(text) > 10:
+        return False, "That doesn't look like a valid API_ID. Please double-check it on my.telegram.org."
+    return True, text
 
 
-def validate_phone(phone: str) -> bool:
-    """Validate phone number format"""
-    if not phone:
-        return False
-    
-    # Remove whitespace and special characters
-    cleaned = re.sub(r'[\s\-()\+]', '', phone)
-    
-    # Check if it starts with + or digits
-    if not phone.startswith('+'):
-        return False
-    
-    # Remove leading +
-    number = phone[1:]
-    
-    # Check if it contains only digits
-    if not number.isdigit():
-        return False
-    
-    # Check length (minimum 8 digits, maximum 15 digits)
-    if not (8 <= len(number) <= 15):
-        return False
-    
-    return True
+def validate_api_hash(text: str) -> tuple[bool, str]:
+    text = text.strip()
+    if not _HASH_RE.match(text):
+        return False, "API_HASH must be a 32-character hexadecimal string. Please check my.telegram.org and try again."
+    return True, text.lower()
 
 
-def validate_otp(otp: str) -> bool:
-    """Validate OTP format"""
-    if not otp:
-        return False
-    
-    # OTP should be 5 or 6 digits
-    return bool(re.match(r'^\d{5,6}$', otp))
+def validate_phone(text: str) -> tuple[bool, str]:
+    text = text.strip().replace(" ", "").replace("-", "")
+    if not text.startswith("+"):
+        text = "+" + text
+    if not _PHONE_RE.match(text):
+        return False, "Please send a valid phone number in international format, e.g. +919876543210."
+    return True, text
 
 
-def validate_password(password: str) -> bool:
-    """Validate 2FA password"""
-    if not password:
-        return False
-    
-    # Password should be at least 1 character (basic validation)
-    return len(password) >= 1
+def validate_otp(text: str) -> tuple[bool, str]:
+    digits = re.sub(r"\D", "", text.strip())
+    if not digits or len(digits) < 4 or len(digits) > 7:
+        return False, "That doesn't look like a valid login code. Please send only the digits Telegram sent you."
+    return True, digits
+
+
+def validate_password(text: str) -> tuple[bool, str]:
+    text = text.strip()
+    if not text:
+        return False, "Password cannot be empty. Please send your Two-Step Verification password."
+    if len(text) > 256:
+        return False, "That password looks too long to be valid. Please double-check and try again."
+    return True, text
