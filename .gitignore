@@ -1,71 +1,16 @@
-# Python
+.env
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
-.Python
+*.py[cod]
 *.so
-*.egg
-*.egg-info/
-dist/
-build/
-*.egg-info/
-*.whl
-
-# Virtual Environment
 venv/
 env/
 ENV/
 .venv/
-
-# Environment Variables
-.env
-.env.local
-.env.*.local
-
-# Logs
-*.log
-bot.log
-logs/
-*.log*
-
-# IDE
+*.session
+*.session-journal
 .vscode/
 .idea/
 *.swp
-*.swo
-*~
 .DS_Store
-
-# Database
-*.db
-*.sqlite
-*.sqlite3
-
-# Session files
-*.session
-*.session-journal
-sessions/
-
-# Testing
-.pytest_cache/
-.coverage
-htmlcov/
-
-# Backup files
-*.bak
-*.backup
-
-# Render Deployment
-.dockerignore
-Dockerfile
-
-# Temporary files
-tmp/
-temp/
-*.tmp
-
-# Sensitive data
-sensitive_data/
-keys/
-secrets/
+Thumbs.db
+*.log
