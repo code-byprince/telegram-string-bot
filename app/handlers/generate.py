@@ -1,681 +1,365 @@
 """
-Generate command and conversation handlers
+The /generate conversation flow.
+
+State machine steps:
+    ASK_API_ID -> ASK_API_HASH -> ASK_PHONE -> ASK_OTP -> [ASK_PASSWORD] -> done
+
+A temporary, in-memory-only Pyrogram Client (the user's own API_ID/API_HASH)
+is used to request a login code and sign in. Once a session string has been
+exported it is sent to the requesting user and the temporary client, plus
+every other sensitive field, is wiped from memory immediately.
 """
 
 import asyncio
-from datetime import datetime
-from typing import Optional, Dict, Any
-from pyrogram import Client, enums
-from pyrogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+
+from pyrogram import Client, filters
+from pyrogram.types import Message
 from pyrogram.errors import (
-    FloodWait,
     ApiIdInvalid,
-    ApiIdPublishedFlood,
     PhoneNumberInvalid,
+    PhoneNumberBanned,
     PhoneCodeInvalid,
     PhoneCodeExpired,
-    PasswordHashInvalid,
     SessionPasswordNeeded,
-    BadRequest
+    PasswordHashInvalid,
+    FloodWait,
+    RPCError,
 )
+
 from app.config import Config
-from app.utils.state_manager import StateManager
-from app.utils.validators import validate_api_id, validate_api_hash, validate_phone
-from app.utils.logger import setup_logger
-from app.models.user_state import UserState, UserStep, SessionData
+from app.utils.logger import log
+from app.utils.stats import stats
+from app.utils.rate_limiter import RateLimiter
+from app.utils.state_manager import StateManager, Step
+from app.utils.validators import (
+    validate_api_id,
+    validate_api_hash,
+    validate_phone,
+    validate_otp,
+    validate_password,
+)
 
-logger = setup_logger(__name__)
-
-# Rate limiting storage
-rate_limits: Dict[int, Dict[str, Any]] = {}
-user_sessions: Dict[int, Dict[str, Any]] = {}
-
-
-async def generate_command(client, message: Message):
-    """Handle /generate command"""
-    user_id = message.from_user.id
-    
-    # Check rate limiting
-    if not _check_rate_limit(user_id):
-        await message.reply_text(
-            "⚠️ <b>Rate Limit Exceeded</b>\n\n"
-            f"You have reached the maximum number of attempts ({Config.RATE_LIMIT}) "
-            f"in the last {Config.RATE_LIMIT_PERIOD // 60} minutes.\n\n"
-            "Please try again later."
-        )
-        return
-    
-    # Check if user already has an active session
-    if user_id in user_sessions:
-        await message.reply_text(
-            "⚠️ <b>Active Session in Progress</b>\n\n"
-            "You already have an active session generation process.\n"
-            "Please complete or cancel it first.\n\n"
-            "Use /cancel to cancel the current session."
-        )
-        return
-    
-    # Initialize session
-    user_sessions[user_id] = {
-        "state": UserState.INIT,
-        "data": SessionData(),
-        "last_active": datetime.now(),
-        "step": UserStep.INIT
-    }
-    
-    # Send initial message
-    await message.reply_text(
-        "<b>🔐 String Session Generator</b>\n\n"
-        "To generate your Pyrogram string session, I need some information.\n\n"
-        "Please follow the steps below:\n\n"
-        "<b>Step 1:</b> Enter your <b>API_ID</b>\n"
-        "<i>You can get this from https://my.telegram.org</i>\n\n"
-        "Type <b>/cancel</b> at any time to cancel the process.",
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("❌ Cancel", callback_data="cancel_generation")]
-        ])
-    )
-    
-    # Update state
-    user_sessions[user_id]["state"] = UserState.AWAITING_API_ID
-    user_sessions[user_id]["step"] = UserStep.AWAITING_API_ID
-    
-    logger.info(f"Started session generation for user: {user_id}")
+state_manager = StateManager(timeout_seconds=Config.SESSION_TIMEOUT_SECONDS)
+rate_limiter = RateLimiter(
+    command_cooldown=Config.COMMAND_RATE_LIMIT_SECONDS,
+    generation_cooldown=Config.RATE_LIMIT_SECONDS,
+)
 
 
-async def text_message_handler(client, message: Message):
-    """Handle text messages during conversation"""
-    user_id = message.from_user.id
-    
-    # Check if user has an active session
-    if user_id not in user_sessions:
-        # Check if user is trying to provide input without starting
-        if message.text and not message.text.startswith('/'):
-            await message.reply_text(
-                "⚠️ <b>No Active Session</b>\n\n"
-                "Please start a new session using /generate command."
+def _in_flow(_, __, message: Message) -> bool:
+    if not message.from_user:
+        return False
+    return state_manager.has_active(message.from_user.id)
+
+
+in_flow_filter = filters.create(_in_flow)
+
+
+def register(app: Client):
+    async def notify_timeout(user_id: int):
+        try:
+            await app.send_message(
+                user_id,
+                "⌛ Your session generation request timed out due to inactivity. "
+                "Send /generate to start again.",
             )
-        return
-    
-    # Update last active time
-    user_sessions[user_id]["last_active"] = datetime.now()
-    
-    session = user_sessions[user_id]
-    current_state = session["state"]
-    data = session["data"]
-    
-    try:
-        # Handle input based on current state
-        if current_state == UserState.AWAITING_API_ID:
-            await _handle_api_id(client, message, user_id, session, data)
-        elif current_state == UserState.AWAITING_API_HASH:
-            await _handle_api_hash(client, message, user_id, session, data)
-        elif current_state == UserState.AWAITING_PHONE:
-            await _handle_phone(client, message, user_id, session, data)
-        elif current_state == UserState.AWAITING_OTP:
-            await _handle_otp(client, message, user_id, session, data)
-        elif current_state == UserState.AWAITING_2FA:
-            await _handle_2fa(client, message, user_id, session, data)
-        else:
+        except Exception as exc:  # noqa: BLE001
+            log.warning(f"Could not notify user about timeout: {exc}")
+
+    @app.on_message(filters.command("generate") & filters.private)
+    async def generate_start(client: Client, message: Message):
+        user_id = message.from_user.id
+        stats.register_user(user_id)
+
+        if not rate_limiter.allow_command(user_id):
+            return
+
+        if state_manager.has_active(user_id):
             await message.reply_text(
-                "⚠️ Invalid state. Please use /cancel and try again."
+                "⚠️ You already have a session generation in progress.\n"
+                "Send /cancel to stop it before starting a new one.",
+                quote=True,
             )
-    except FloodWait as e:
+            return
+
+        allowed, wait_seconds = rate_limiter.allow_generation(user_id)
+        if not allowed:
+            await message.reply_text(
+                f"🚦 Please wait {wait_seconds}s before starting another "
+                "generation attempt. This limit protects your account from "
+                "Telegram's own anti-abuse restrictions.",
+                quote=True,
+            )
+            return
+
+        await state_manager.start(user_id, notify_timeout)
         await message.reply_text(
-            f"⏳ <b>Flood Wait</b>\n\n"
-            f"Telegram is limiting requests. Please wait {e.value} seconds before trying again."
+            "🔢 **Step 1/4 — API_ID**\n\n"
+            "Please send your **API_ID**.\n"
+            "You can get this from https://my.telegram.org → *API Development Tools*.\n\n"
+            "Send /cancel anytime to stop.",
+            quote=True,
         )
-    except Exception as e:
-        logger.error(f"Error in text message handler for user {user_id}: {e}")
-        await message.reply_text(
-            "❌ <b>An Error Occurred</b>\n\n"
-            "Something went wrong. Please use /cancel and try again.\n"
-            "If the problem persists, contact an administrator."
-        )
-        _cleanup_user_session(user_id)
+
+    @app.on_message(filters.command("cancel") & filters.private)
+    async def cancel_flow(client: Client, message: Message):
+        user_id = message.from_user.id
+        if not state_manager.has_active(user_id):
+            await message.reply_text("Nothing to cancel — no active generation in progress.")
+            return
+        await state_manager.clear(user_id)
+        await message.reply_text("❌ Cancelled. All temporary data for this session has been wiped.")
+
+    @app.on_message(filters.private & filters.text & in_flow_filter)
+    async def flow_step(client: Client, message: Message):
+        user_id = message.from_user.id
+        state = state_manager.get(user_id)
+        if state is None:
+            return
+
+        text = message.text.strip()
+        state.touch()
+
+        if text.startswith("/"):
+            # Let dedicated command handlers deal with commands like /cancel.
+            return
+
+        if state.step == Step.ASK_API_ID:
+            await _handle_api_id(message, state)
+        elif state.step == Step.ASK_API_HASH:
+            await _handle_api_hash(message, state)
+        elif state.step == Step.ASK_PHONE:
+            await _handle_phone(message, state)
+        elif state.step == Step.ASK_OTP:
+            await _handle_otp(message, state)
+        elif state.step == Step.ASK_PASSWORD:
+            await _handle_password(message, state)
 
 
-async def callback_handler(client, callback_query: CallbackQuery):
-    """Handle callback queries"""
-    user_id = callback_query.from_user.id
-    data = callback_query.data
-    
-    if data == "cancel_generation":
-        await cancel_generation(client, callback_query)
-    elif data == "confirm_cancel":
-        await confirm_cancel(client, callback_query)
-    elif data == "continue_generation":
-        await continue_generation(client, callback_query)
-    else:
-        await callback_query.answer("Unknown action", show_alert=True)
-
-
-async def _handle_api_id(client, message: Message, user_id: int, session: Dict, data: SessionData):
-    """Handle API_ID input"""
-    api_id = message.text.strip()
-    
-    if not validate_api_id(api_id):
-        await message.reply_text(
-            "❌ <b>Invalid API_ID</b>\n\n"
-            "API_ID must be a valid integer.\n"
-            "Please enter a valid API_ID or use /cancel to cancel.",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("❌ Cancel", callback_data="cancel_generation")]
-            ])
-        )
+async def _handle_api_id(message: Message, state):
+    ok, value = validate_api_id(message.text)
+    if not ok:
+        await message.reply_text(f"❌ {value}")
         return
-    
-    data.api_id = int(api_id)
-    session["state"] = UserState.AWAITING_API_HASH
-    session["step"] = UserStep.AWAITING_API_HASH
-    
+    state.api_id = int(value)
+    await state_manager.advance(state.user_id, Step.ASK_API_HASH)
     await message.reply_text(
-        "✅ <b>API_ID accepted!</b>\n\n"
-        "<b>Step 2:</b> Enter your <b>API_HASH</b>\n"
-        "<i>You can get this from https://my.telegram.org</i>\n\n"
-        "Type /cancel to cancel.",
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("❌ Cancel", callback_data="cancel_generation")]
-        ])
+        "🔑 **Step 2/4 — API_HASH**\n\nNow send your **API_HASH** (32-character string)."
     )
-    
-    logger.info(f"User {user_id} provided API_ID")
 
 
-async def _handle_api_hash(client, message: Message, user_id: int, session: Dict, data: SessionData):
-    """Handle API_HASH input"""
-    api_hash = message.text.strip()
-    
-    if not validate_api_hash(api_hash):
-        await message.reply_text(
-            "❌ <b>Invalid API_HASH</b>\n\n"
-            "API_HASH must be a valid alphanumeric string.\n"
-            "Please enter a valid API_HASH or use /cancel to cancel.",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("❌ Cancel", callback_data="cancel_generation")]
-            ])
-        )
+async def _handle_api_hash(message: Message, state):
+    ok, value = validate_api_hash(message.text)
+    if not ok:
+        await message.reply_text(f"❌ {value}")
         return
-    
-    data.api_hash = api_hash
-    session["state"] = UserState.AWAITING_PHONE
-    session["step"] = UserStep.AWAITING_PHONE
-    
+    state.api_hash = value
+    await state_manager.advance(state.user_id, Step.ASK_PHONE)
     await message.reply_text(
-        "✅ <b>API_HASH accepted!</b>\n\n"
-        "<b>Step 3:</b> Enter your <b>Phone Number</b>\n"
-        "<i>Format: +1234567890 (with country code)</i>\n\n"
-        "Type /cancel to cancel.",
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("❌ Cancel", callback_data="cancel_generation")]
-        ])
+        "📱 **Step 3/4 — Phone Number**\n\n"
+        "Send your phone number in international format, e.g. `+919876543210`."
     )
-    
-    logger.info(f"User {user_id} provided API_HASH")
 
 
-async def _handle_phone(client, message: Message, user_id: int, session: Dict, data: SessionData):
-    """Handle phone number input"""
-    phone = message.text.strip()
-    
-    if not validate_phone(phone):
-        await message.reply_text(
-            "❌ <b>Invalid Phone Number</b>\n\n"
-            "Please enter a valid phone number with country code.\n"
-            "Format: +1234567890\n\n"
-            "Please try again or use /cancel to cancel.",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("❌ Cancel", callback_data="cancel_generation")]
-            ])
-        )
+async def _handle_phone(message: Message, state):
+    ok, value = validate_phone(message.text)
+    if not ok:
+        await message.reply_text(f"❌ {value}")
         return
-    
-    data.phone = phone
-    
-    # Send "sending code" message
-    status_msg = await message.reply_text(
-        "📱 <b>Sending OTP Code</b>\n\n"
-        "Please wait while we send the verification code to your Telegram account..."
+
+    status_msg = await message.reply_text("⏳ Requesting login code from Telegram...")
+
+    client = Client(
+        name=f"session_gen_{state.user_id}",
+        api_id=state.api_id,
+        api_hash=state.api_hash,
+        in_memory=True,
     )
-    
+
     try:
-        # Initialize a temporary client to send code
-        temp_client = Client(
-            f"temp_{user_id}",
-            api_id=data.api_id,
-            api_hash=data.api_hash,
-            in_memory=True
-        )
-        
-        await temp_client.start()
-        
-        # Send code
-        sent_code = await temp_client.send_code(phone)
-        
-        data.phone_code_hash = sent_code.phone_code_hash
-        session["state"] = UserState.AWAITING_OTP
-        session["step"] = UserStep.AWAITING_OTP
-        session["temp_client"] = temp_client
-        
-        await status_msg.edit_text(
-            "✅ <b>OTP Code Sent!</b>\n\n"
-            "<b>Step 4:</b> Enter the <b>OTP Code</b> you received\n"
-            "<i>Format: 12345 (5-6 digits)</i>\n\n"
-            "Type /cancel to cancel.",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("❌ Cancel", callback_data="cancel_generation")]
-            ])
-        )
-        
-        logger.info(f"OTP code sent to user {user_id}")
-        
+        await client.connect()
+        sent_code = await client.send_code(value)
     except ApiIdInvalid:
         await status_msg.edit_text(
-            "❌ <b>Invalid API Credentials</b>\n\n"
-            "The API_ID and API_HASH you provided are invalid.\n"
-            "Please use /cancel and start over with correct credentials."
+            "❌ Your API_ID / API_HASH pair is invalid. Send /generate to start over."
         )
-        _cleanup_user_session(user_id)
-    except ApiIdPublishedFlood:
-        await status_msg.edit_text(
-            "⚠️ <b>API ID Published</b>\n\n"
-            "This API_ID has been published and is not allowed.\n"
-            "Please use a different API_ID from https://my.telegram.org"
-        )
-        _cleanup_user_session(user_id)
+        await _cleanup_failed(state)
+        return
     except PhoneNumberInvalid:
         await status_msg.edit_text(
-            "❌ <b>Invalid Phone Number</b>\n\n"
-            "The phone number you entered is invalid.\n"
-            "Please use /cancel and try again with a valid number."
+            "❌ Invalid phone number. Send /generate to start over with a valid number."
         )
-        _cleanup_user_session(user_id)
-    except Exception as e:
-        logger.error(f"Error sending OTP for user {user_id}: {e}")
+        await _cleanup_failed(state)
+        return
+    except PhoneNumberBanned:
         await status_msg.edit_text(
-            "❌ <b>Error Sending OTP</b>\n\n"
-            "Failed to send OTP. Please use /cancel and try again."
+            "❌ This phone number is banned from Telegram. I can't generate a session for it."
         )
-        _cleanup_user_session(user_id)
-
-
-async def _handle_otp(client, message: Message, user_id: int, session: Dict, data: SessionData):
-    """Handle OTP input"""
-    otp = message.text.strip()
-    
-    if not otp.isdigit() or len(otp) not in [5, 6]:
-        await message.reply_text(
-            "❌ <b>Invalid OTP Format</b>\n\n"
-            "OTP must be 5 or 6 digits.\n"
-            "Please enter the correct OTP or use /cancel to cancel.",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("❌ Cancel", callback_data="cancel_generation")]
-            ])
-        )
+        await _cleanup_failed(state)
         return
-    
-    temp_client = session.get("temp_client")
-    if not temp_client:
-        await message.reply_text(
-            "❌ <b>Session Error</b>\n\n"
-            "Client session not found. Please use /cancel and start over."
+    except FloodWait as e:
+        await status_msg.edit_text(
+            f"⏱️ Telegram is rate-limiting this action. Please try again in {e.value} seconds."
         )
-        _cleanup_user_session(user_id)
+        await _cleanup_failed(state)
         return
-    
-    try:
-        # Try to sign in with OTP
-        await message.reply_text(
-            "⏳ <b>Verifying OTP...</b>\n\n"
-            "Please wait while we verify your code."
+    except RPCError as e:
+        log.warning(f"send_code RPCError (type={type(e).__name__})")
+        await status_msg.edit_text(
+            "❌ Telegram rejected the request. Please double-check your details and try /generate again."
         )
-        
-        try:
-            await temp_client.sign_in(
-                data.phone,
-                data.phone_code_hash,
-                otp
-            )
-            
-            # Success! Generate string session
-            string_session = await temp_client.export_session_string()
-            
-            # Send the string session to the user
-            await client.send_message(
-                user_id,
-                f"<b>✅ String Session Generated Successfully!</b>\n\n"
-                f"<code>{string_session}</code>\n\n"
-                f"<b>⚠️ Important:</b>\n"
-                f"• Keep this string session secure\n"
-                f"• Never share it with anyone\n"
-                f"• Use this with Pyrogram like:\n"
-                f"<code>app = Client('session', api_id=YOUR_API_ID, api_hash=YOUR_API_HASH)</code>\n\n"
-                f"<b>🔄 Session Details:</b>\n"
-                f"• User ID: {temp_client.me.id}\n"
-                f"• First Name: {temp_client.me.first_name or 'N/A'}\n"
-                f"• Last Name: {temp_client.me.last_name or 'N/A'}\n"
-                f"• Username: @{temp_client.me.username or 'N/A'}\n\n"
-                f"<i>This message will be deleted after 10 minutes for security.</i>"
-            )
-            
-            # Schedule message deletion after 10 minutes
-            asyncio.create_task(_delete_after_delay(client, user_id, 600))
-            
-            # Log success
-            logger.info(f"String session generated successfully for user: {user_id}")
-            
-            # Cleanup
-            await temp_client.stop()
-            _cleanup_user_session(user_id)
-            
-        except PhoneCodeInvalid:
-            await message.reply_text(
-                "❌ <b>Invalid OTP</b>\n\n"
-                "The OTP code you entered is incorrect.\n"
-                "Please try again or use /cancel to cancel.",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("❌ Cancel", callback_data="cancel_generation")]
-                ])
-            )
-        except PhoneCodeExpired:
-            await message.reply_text(
-                "❌ <b>OTP Expired</b>\n\n"
-                "The OTP code has expired.\n"
-                "Please use /cancel and start over to receive a new code."
-            )
-            _cleanup_user_session(user_id)
-        except SessionPasswordNeeded:
-            # 2FA is enabled
-            session["state"] = UserState.AWAITING_2FA
-            session["step"] = UserStep.AWAITING_2FA
-            
-            await message.reply_text(
-                "🔐 <b>Two-Step Verification</b>\n\n"
-                "Your account has 2FA enabled.\n"
-                "<b>Step 5:</b> Enter your <b>2FA Password</b>\n\n"
-                "Type /cancel to cancel.",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("❌ Cancel", callback_data="cancel_generation")]
-                ])
-            )
-            
-        except PasswordHashInvalid:
-            await message.reply_text(
-                "❌ <b>Invalid 2FA Password</b>\n\n"
-                "The password you entered is incorrect.\n"
-                "Please try again or use /cancel to cancel.",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("❌ Cancel", callback_data="cancel_generation")]
-                ])
-            )
-        except BadRequest as e:
-            if "PASSWORD_HASH_INVALID" in str(e):
-                await message.reply_text(
-                    "❌ <b>Invalid 2FA Password</b>\n\n"
-                    "The password you entered is incorrect.\n"
-                    "Please try again or use /cancel to cancel.",
-                    reply_markup=InlineKeyboardMarkup([
-                        [InlineKeyboardButton("❌ Cancel", callback_data="cancel_generation")]
-                    ])
-                )
-            else:
-                raise
-                
-    except Exception as e:
-        logger.error(f"Error verifying OTP for user {user_id}: {e}")
-        await message.reply_text(
-            "❌ <b>Error Verifying OTP</b>\n\n"
-            "Something went wrong. Please use /cancel and try again."
-        )
-        _cleanup_user_session(user_id)
-
-
-async def _handle_2fa(client, message: Message, user_id: int, session: Dict, data: SessionData):
-    """Handle 2FA password input"""
-    password = message.text.strip()
-    
-    if not password:
-        await message.reply_text(
-            "❌ <b>Invalid Password</b>\n\n"
-            "Password cannot be empty.\n"
-            "Please enter your 2FA password or use /cancel to cancel.",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("❌ Cancel", callback_data="cancel_generation")]
-            ])
-        )
+        await _cleanup_failed(state)
         return
-    
-    temp_client = session.get("temp_client")
-    if not temp_client:
-        await message.reply_text(
-            "❌ <b>Session Error</b>\n\n"
-            "Client session not found. Please use /cancel and start over."
-        )
-        _cleanup_user_session(user_id)
-        return
-    
-    try:
-        await message.reply_text(
-            "⏳ <b>Verifying 2FA Password...</b>\n\n"
-            "Please wait while we verify your password."
-        )
-        
-        # Check password
-        await temp_client.check_password(password)
-        
-        # Complete sign in
-        await temp_client.sign_in(
-            data.phone,
-            data.phone_code_hash
-        )
-        
-        # Generate string session
-        string_session = await temp_client.export_session_string()
-        
-        # Send the string session to the user
-        await client.send_message(
-            user_id,
-            f"<b>✅ String Session Generated Successfully!</b>\n\n"
-            f"<code>{string_session}</code>\n\n"
-            f"<b>⚠️ Important:</b>\n"
-            f"• Keep this string session secure\n"
-            f"• Never share it with anyone\n"
-            f"• Use this with Pyrogram like:\n"
-            f"<code>app = Client('session', api_id=YOUR_API_ID, api_hash=YOUR_API_HASH)</code>\n\n"
-            f"<b>🔄 Session Details:</b>\n"
-            f"• User ID: {temp_client.me.id}\n"
-            f"• First Name: {temp_client.me.first_name or 'N/A'}\n"
-            f"• Last Name: {temp_client.me.last_name or 'N/A'}\n"
-            f"• Username: @{temp_client.me.username or 'N/A'}\n\n"
-            f"<i>This message will be deleted after 10 minutes for security.</i>"
-        )
-        
-        # Schedule message deletion after 10 minutes
-        asyncio.create_task(_delete_after_delay(client, user_id, 600))
-        
-        # Log success
-        logger.info(f"String session generated successfully with 2FA for user: {user_id}")
-        
-        # Cleanup
-        await temp_client.stop()
-        _cleanup_user_session(user_id)
-        
-    except PasswordHashInvalid:
-        await message.reply_text(
-            "❌ <b>Invalid 2FA Password</b>\n\n"
-            "The password you entered is incorrect.\n"
-            "Please try again or use /cancel to cancel.",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("❌ Cancel", callback_data="cancel_generation")]
-            ])
-        )
-    except Exception as e:
-        logger.error(f"Error verifying 2FA for user {user_id}: {e}")
-        await message.reply_text(
-            "❌ <b>Error Verifying 2FA</b>\n\n"
-            "Something went wrong. Please use /cancel and try again."
-        )
-        _cleanup_user_session(user_id)
 
+    state.phone = value
+    state.phone_code_hash = sent_code.phone_code_hash
+    state.client = client
+    await state_manager.advance(state.user_id, Step.ASK_OTP)
 
-async def cancel_generation(client, callback_query: CallbackQuery):
-    """Cancel generation from callback"""
-    user_id = callback_query.from_user.id
-    
-    if user_id in user_sessions:
-        await callback_query.message.edit_text(
-            "⚠️ <b>Cancel Generation?</b>\n\n"
-            "Are you sure you want to cancel the session generation process?\n"
-            "All data will be lost.",
-            reply_markup=InlineKeyboardMarkup([
-                [
-                    InlineKeyboardButton("✅ Yes, Cancel", callback_data="confirm_cancel"),
-                    InlineKeyboardButton("❌ No, Continue", callback_data="continue_generation")
-                ]
-            ])
-        )
-        await callback_query.answer()
-    else:
-        await callback_query.message.edit_text(
-            "ℹ️ <b>No Active Session</b>\n\n"
-            "You don't have any active session generation process."
-        )
-        await callback_query.answer()
-
-
-async def confirm_cancel(client, callback_query: CallbackQuery):
-    """Confirm cancellation"""
-    user_id = callback_query.from_user.id
-    
-    _cleanup_user_session(user_id)
-    
-    await callback_query.message.edit_text(
-        "✅ <b>Generation Cancelled</b>\n\n"
-        "The session generation process has been cancelled.\n"
-        "You can start a new session anytime using /generate."
+    await status_msg.edit_text(
+        "✅ Code sent!\n\n"
+        "🔐 **Step 4/4 — Login Code**\n\n"
+        "Please send the login code Telegram just sent you.\n"
+        "_Tip: if the code looks like `1-2-3-4-5`, just send the digits: `12345`._"
     )
-    await callback_query.answer()
 
 
-async def continue_generation(client, callback_query: CallbackQuery):
-    """Continue generation after cancellation prompt"""
-    user_id = callback_query.from_user.id
-    
-    if user_id in user_sessions:
-        session = user_sessions[user_id]
-        
-        # Resume based on current state
-        if session["state"] == UserState.AWAITING_API_ID:
-            await callback_query.message.edit_text(
-                "<b>🔐 String Session Generator</b>\n\n"
-                "<b>Step 1:</b> Enter your <b>API_ID</b>\n"
-                "<i>You can get this from https://my.telegram.org</i>\n\n"
-                "Type /cancel to cancel."
-            )
-        elif session["state"] == UserState.AWAITING_API_HASH:
-            await callback_query.message.edit_text(
-                "<b>🔐 String Session Generator</b>\n\n"
-                "<b>Step 2:</b> Enter your <b>API_HASH</b>\n"
-                "<i>You can get this from https://my.telegram.org</i>\n\n"
-                "Type /cancel to cancel."
-            )
-        elif session["state"] == UserState.AWAITING_PHONE:
-            await callback_query.message.edit_text(
-                "<b>🔐 String Session Generator</b>\n\n"
-                "<b>Step 3:</b> Enter your <b>Phone Number</b>\n"
-                "<i>Format: +1234567890 (with country code)</i>\n\n"
-                "Type /cancel to cancel."
-            )
-        elif session["state"] == UserState.AWAITING_OTP:
-            await callback_query.message.edit_text(
-                "<b>🔐 String Session Generator</b>\n\n"
-                "<b>Step 4:</b> Enter the <b>OTP Code</b> you received\n"
-                "<i>Format: 12345 (5-6 digits)</i>\n\n"
-                "Type /cancel to cancel."
-            )
-        elif session["state"] == UserState.AWAITING_2FA:
-            await callback_query.message.edit_text(
-                "<b>🔐 String Session Generator</b>\n\n"
-                "<b>Step 5:</b> Enter your <b>2FA Password</b>\n\n"
-                "Type /cancel to cancel."
-            )
-        else:
-            await callback_query.message.edit_text(
-                "ℹ️ <b>Session Continued</b>\n\n"
-                "Please provide the requested information."
-            )
-    else:
-        await callback_query.message.edit_text(
-            "ℹ️ <b>No Active Session</b>\n\n"
-            "You don't have any active session generation process."
-        )
-    
-    await callback_query.answer()
+async def _handle_otp(message: Message, state):
+    ok, value = validate_otp(message.text)
+    if not ok:
+        await message.reply_text(f"❌ {value}")
+        return
 
+    client = state.client
+    if client is None:
+        await message.reply_text("Something went wrong. Send /generate to start over.")
+        await state_manager.clear(state.user_id)
+        return
 
-def _check_rate_limit(user_id: int) -> bool:
-    """Check if user is rate limited"""
-    current_time = datetime.now()
-    
-    if user_id not in rate_limits:
-        rate_limits[user_id] = {
-            "count": 1,
-            "first_request": current_time
-        }
-        return True
-    
-    data = rate_limits[user_id]
-    elapsed = (current_time - data["first_request"]).total_seconds()
-    
-    if elapsed > Config.RATE_LIMIT_PERIOD:
-        # Reset rate limit
-        data["count"] = 1
-        data["first_request"] = current_time
-        return True
-    
-    if data["count"] >= Config.RATE_LIMIT:
-        return False
-    
-    data["count"] += 1
-    return True
+    status_msg = await message.reply_text("⏳ Verifying code...")
 
-
-def _cleanup_user_session(user_id: int):
-    """Clean up user session data"""
-    if user_id in user_sessions:
-        session = user_sessions[user_id]
-        
-        # Stop temp client if exists
-        temp_client = session.get("temp_client")
-        if temp_client:
-            try:
-                # Use asyncio.create_task to avoid blocking
-                asyncio.create_task(temp_client.stop())
-            except:
-                pass
-        
-        # Clear sensitive data
-        if "data" in session:
-            session["data"].clear()
-        
-        # Remove session
-        del user_sessions[user_id]
-        logger.info(f"Cleaned up session for user: {user_id}")
-    
-    # Clean up rate limit data if exists
-    if user_id in rate_limits:
-        del rate_limits[user_id]
-
-
-async def _delete_after_delay(client, chat_id: int, delay: int):
-    """Delete message after a delay"""
-    await asyncio.sleep(delay)
     try:
-        # Get the last message sent to the user (the string session message)
-        async for message in client.get_chat_history(chat_id, limit=1):
-            if message.text and "String Session Generated Successfully" in message.text:
-                await message.delete()
-                logger.info(f"Deleted string session message for user: {chat_id}")
-                break
-    except Exception as e:
-        logger.error(f"Error deleting message for user {chat_id}: {e}")
+        await client.sign_in(state.phone, state.phone_code_hash, value)
+    except SessionPasswordNeeded:
+        await state_manager.advance(state.user_id, Step.ASK_PASSWORD)
+        await status_msg.edit_text(
+            "🔒 Two-Step Verification is enabled on this account.\n\n"
+            "Please send your **2-Step Verification password**."
+        )
+        return
+    except PhoneCodeInvalid:
+        state.otp_attempts += 1
+        if state.otp_attempts >= Config.MAX_OTP_ATTEMPTS:
+            await status_msg.edit_text(
+                "❌ Too many invalid attempts. Send /generate to start over."
+            )
+            await _cleanup_failed(state)
+            return
+        await status_msg.edit_text(
+            f"❌ Invalid code. Please try again "
+            f"({state.otp_attempts}/{Config.MAX_OTP_ATTEMPTS})."
+        )
+        return
+    except PhoneCodeExpired:
+        await status_msg.edit_text(
+            "❌ This code has expired. Send /generate to start over."
+        )
+        await _cleanup_failed(state)
+        return
+    except FloodWait as e:
+        await status_msg.edit_text(
+            f"⏱️ Telegram is rate-limiting this action. Please try again in {e.value} seconds."
+        )
+        await _cleanup_failed(state)
+        return
+    except RPCError as e:
+        log.warning(f"sign_in RPCError (type={type(e).__name__})")
+        await status_msg.edit_text(
+            "❌ Sign-in failed. Send /generate to start over."
+        )
+        await _cleanup_failed(state)
+        return
+
+    await _finish_success(status_msg, state)
+
+
+async def _handle_password(message: Message, state):
+    ok, value = validate_password(message.text)
+    if not ok:
+        await message.reply_text(f"❌ {value}")
+        return
+
+    client = state.client
+    if client is None:
+        await message.reply_text("Something went wrong. Send /generate to start over.")
+        await state_manager.clear(state.user_id)
+        return
+
+    status_msg = await message.reply_text("⏳ Verifying password...")
+
+    try:
+        await client.check_password(value)
+    except PasswordHashInvalid:
+        state.password_attempts += 1
+        if state.password_attempts >= Config.MAX_PASSWORD_ATTEMPTS:
+            await status_msg.edit_text(
+                "❌ Too many incorrect attempts. Send /generate to start over."
+            )
+            await _cleanup_failed(state)
+            return
+        await status_msg.edit_text(
+            f"❌ Incorrect password. Please try again "
+            f"({state.password_attempts}/{Config.MAX_PASSWORD_ATTEMPTS})."
+        )
+        return
+    except FloodWait as e:
+        await status_msg.edit_text(
+            f"⏱️ Telegram is rate-limiting this action. Please try again in {e.value} seconds."
+        )
+        await _cleanup_failed(state)
+        return
+    except RPCError as e:
+        log.warning(f"check_password RPCError (type={type(e).__name__})")
+        await status_msg.edit_text("❌ Verification failed. Send /generate to start over.")
+        await _cleanup_failed(state)
+        return
+
+    await _finish_success(status_msg, state)
+
+
+async def _finish_success(status_msg: Message, state):
+    client = state.client
+    try:
+        session_string = await client.export_session_string()
+    except Exception as exc:  # noqa: BLE001
+        log.error(f"Failed to export session string: {type(exc).__name__}")
+        await status_msg.edit_text(
+            "❌ Something went wrong while generating your session. Please try /generate again."
+        )
+        stats.record_failure()
+        await _cleanup_failed(state)
+        return
+
+    try:
+        await status_msg.edit_text(
+            "✅ **Success!** Your string session is below.\n\n"
+            "⚠️ **Keep it private** — anyone with this string has full access "
+            "to your Telegram account. Never share it or paste it into an "
+            "untrusted bot or website."
+        )
+        await status_msg.reply_text(f"`{session_string}`")
+    finally:
+        # Wipe the local variable regardless of what happens above.
+        session_string = None  # noqa: F841
+        del session_string
+
+    stats.record_success()
+    log.info(f"Session string generated successfully for user_id={state.user_id}")
+
+    user_id = state.user_id
+    await state_manager.clear(user_id)
+
+
+async def _cleanup_failed(state):
+    stats.record_failure()
+    await state_manager.clear(state.user_id)
