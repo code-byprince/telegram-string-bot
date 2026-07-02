@@ -15,21 +15,24 @@ class Config:
     # Telegram Bot Configuration
     BOT_TOKEN = os.getenv("BOT_TOKEN")
     if not BOT_TOKEN:
+        print("❌ ERROR: BOT_TOKEN is required!")
+        print("Please set BOT_TOKEN in environment variables")
         raise ValueError("BOT_TOKEN is required")
     
-    # Admin Configuration
-    ADMIN_IDS = [
-        int(admin_id.strip()) 
-        for admin_id in os.getenv("ADMIN_IDS", "").split(",") 
-        if admin_id.strip()
-    ]
+    # Admin Configuration - Handle empty case
+    admin_ids_str = os.getenv("ADMIN_IDS", "")
+    if admin_ids_str:
+        ADMIN_IDS = [int(admin_id.strip()) for admin_id in admin_ids_str.split(",") if admin_id.strip()]
+    else:
+        ADMIN_IDS = []
+        print("⚠️ WARNING: No ADMIN_IDS set!")
     
     # Rate Limiting
     RATE_LIMIT = int(os.getenv("RATE_LIMIT", "3"))
-    RATE_LIMIT_PERIOD = int(os.getenv("RATE_LIMIT_PERIOD", "300"))  # 5 minutes
+    RATE_LIMIT_PERIOD = int(os.getenv("RATE_LIMIT_PERIOD", "300"))
     
     # Timeout Settings
-    SESSION_TIMEOUT = int(os.getenv("SESSION_TIMEOUT", "300"))  # 5 minutes
+    SESSION_TIMEOUT = int(os.getenv("SESSION_TIMEOUT", "300"))
     
     # Logging
     LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
@@ -39,8 +42,8 @@ class Config:
     HOST = os.getenv("HOST", "0.0.0.0")
     
     # API Configuration
-    API_ID = os.getenv("API_ID")
-    API_HASH = os.getenv("API_HASH")
+    API_ID = os.getenv("API_ID", "6")
+    API_HASH = os.getenv("API_HASH", "your_api_hash_here")
     
     @classmethod
     def is_admin(cls, user_id: int) -> bool:
