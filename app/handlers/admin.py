@@ -1,156 +1,107 @@
-"""
-Admin command handlers
-"""
-
 import asyncio
-from datetime import datetime, timedelta
-from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
+import time
+
+from pyrogram import Client, filters
+from pyrogram.types import Message
+from pyrogram.errors import RPCError
+
 from app.config import Config
-from app.utils.logger import setup_logger
-from app.handlers.generate import user_sessions
-
-logger = setup_logger(__name__)
-
-# Statistics storage (in-memory, reset on restart)
-stats = {
-    "total_users": set(),
-    "successful_generations": 0,
-    "failed_generations": 0,
-    "start_time": datetime.now(),
-    "total_attempts": 0
-}
+from app.utils.logger import log
+from app.utils.stats import stats
+from app.utils.state_manager import StateManager
 
 
-async def stats_command(client, message: Message):
-    """Handle /stats command"""
-    user_id = message.from_user.id
-    
-    if not Config.is_admin(user_id):
-        await message.reply_text("⛔ You are not authorized to use this command.")
-        return
-    
-    # Calculate uptime
-    uptime = datetime.now() - stats["start_time"]
-    uptime_str = str(uptime).split('.')[0]  # Remove microseconds
-    
-    # Get active users
-    active_users = len(user_sessions)
-    
-    stats_message = (
-        f"<b>📊 Bot Statistics</b>\n\n"
-        f"<b>📈 Total Users:</b> {len(stats['total_users'])}\n"
-        f"<b>👤 Active Users:</b> {active_users}\n"
-        f"<b>✅ Successful Generations:</b> {stats['successful_generations']}\n"
-        f"<b>❌ Failed Generations:</b> {stats['failed_generations']}\n"
-        f"<b>🔄 Total Attempts:</b> {stats['total_attempts']}\n"
-        f"<b>⏱️ Uptime:</b> {uptime_str}\n"
-        f"<b>⚙️ Admins:</b> {len(Config.ADMIN_IDS)}\n\n"
-        f"<i>Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</i>"
-    )
-    
-    await message.reply_text(stats_message)
-    logger.info(f"Stats command executed by admin: {user_id}")
+def _is_admin(_, __, message: Message) -> bool:
+    return bool(message.from_user) and message.from_user.id in Config.ADMIN_IDS
 
 
-async def users_command(client, message: Message):
-    """Handle /users command"""
-    user_id = message.from_user.id
-    
-    if not Config.is_admin(user_id):
-        await message.reply_text("⛔ You are not authorized to use this command.")
-        return
-    
-    users = list(stats["total_users"])
-    
-    if not users:
-        await message.reply_text("ℹ️ No users have used the bot yet.")
-        return
-    
-    # Create a formatted list
-    user_list = "📊 <b>User List</b>\n\n"
-    
-    # Show first 50 users
-    for i, user_id in enumerate(users[:50], 1):
-        try:
-            user = await client.get_users(user_id)
-            username = f"@{user.username}" if user.username else "No username"
-            name = user.first_name or "Unknown"
-            user_list += f"{i}. {name} ({username}) - ID: {user_id}\n"
-        except:
-            user_list += f"{i}. User ID: {user_id}\n"
-    
-    if len(users) > 50:
-        user_list += f"\n<i>... and {len(users) - 50} more users</i>"
-    
-    user_list += f"\n\n<b>Total Users:</b> {len(users)}"
-    
-    # Split if message is too long
-    if len(user_list) > 4000:
-        parts = [user_list[i:i+4000] for i in range(0, len(user_list), 4000)]
-        for part in parts:
-            await message.reply_text(part)
-    else:
-        await message.reply_text(user_list)
-    
-    logger.info(f"Users command executed by admin: {user_id}")
+admin_filter = filters.create(_is_admin)
 
 
-async def broadcast_command(client, message: Message):
-    """Handle /broadcast command"""
-    user_id = message.from_user.id
-    
-    if not Config.is_admin(user_id):
-        await message.reply_text("⛔ You are not authorized to use this command.")
-        return
-    
-    # Check if there's a broadcast message
-    text = message.text.split("/broadcast", 1)
-    if len(text) < 2 or not text[1].strip():
-        await message.reply_text(
-            "ℹ️ <b>Usage:</b> /broadcast [message]\n\n"
-            "Send a message to all bot users.\n\n"
-            "<b>Example:</b>\n"
-            "/broadcast Hello everyone! The bot is now back online."
+def _format_uptime(seconds: float) -> str:
+    seconds = int(seconds)
+    days, seconds = divmod(seconds, 86400)
+    hours, seconds = divmod(seconds, 3600)
+    minutes, seconds = divmod(seconds, 60)
+    parts = []
+    if days:
+        parts.append(f"{days}d")
+    if hours:
+        parts.append(f"{hours}h")
+    if minutes:
+        parts.append(f"{minutes}m")
+    parts.append(f"{seconds}s")
+    return " ".join(parts)
+
+
+def register(app: Client, state_manager: StateManager):
+    @app.on_message(filters.command("stats") & filters.private & admin_filter)
+    async def stats_handler(client: Client, message: Message):
+        total = stats.successful_generations + stats.failed_generations
+        success_rate = (
+            f"{(stats.successful_generations / total * 100):.1f}%" if total else "N/A"
         )
-        return
-    
-    broadcast_message = text[1].strip()
-    users = list(stats["total_users"])
-    
-    if not users:
-        await message.reply_text("ℹ️ No users to broadcast to.")
-        return
-    
-    # Send confirmation
-    confirm_msg = await message.reply_text(
-        f"⏳ <b>Broadcasting...</b>\n\n"
-        f"Sending message to {len(users)} users.\n"
-        f"Please wait..."
-    )
-    
-    success_count = 0
-    failed_count = 0
-    
-    # Send to all users
-    for user_id in users:
-        try:
-            await client.send_message(
-                user_id,
-                f"<b>📢 Announcement</b>\n\n{broadcast_message}\n\n"
-                f"<i>This is a broadcast message from the bot administrator.</i>"
+        active_flows = state_manager.active_count
+
+        text = (
+            "📊 **Bot Statistics**\n\n"
+            f"👥 Total unique users: `{stats.total_users}`\n"
+            f"✅ Successful generations: `{stats.successful_generations}`\n"
+            f"❌ Failed generations: `{stats.failed_generations}`\n"
+            f"📈 Success rate: `{success_rate}`\n"
+            f"🔄 Active generation flows: `{active_flows}`\n"
+            f"⏱️ Uptime: `{_format_uptime(stats.uptime_seconds)}`\n\n"
+            "_Counters are in-memory only and reset on restart — no persistent "
+            "database is used, by design._"
+        )
+        await message.reply_text(text, quote=True)
+
+    @app.on_message(filters.command("users") & filters.private & admin_filter)
+    async def users_handler(client: Client, message: Message):
+        await message.reply_text(
+            f"👥 Total unique users who have interacted with the bot: "
+            f"`{stats.total_users}`\n\n"
+            "_Individual user identifiers are not listed here to minimise "
+            "exposure of personal data — only the aggregate count is shown._",
+            quote=True,
+        )
+
+    @app.on_message(filters.command("broadcast") & filters.private & admin_filter)
+    async def broadcast_handler(client: Client, message: Message):
+        if len(message.command) < 2 and not message.reply_to_message:
+            await message.reply_text(
+                "Usage: `/broadcast <message>`\n"
+                "or reply to a message with `/broadcast` to forward its content.",
+                quote=True,
             )
-            success_count += 1
-            await asyncio.sleep(0.5)  # Avoid flood wait
-        except Exception as e:
-            failed_count += 1
-            logger.error(f"Failed to send broadcast to user {user_id}: {e}")
-    
-    # Update confirmation
-    await confirm_msg.edit_text(
-        f"✅ <b>Broadcast Completed</b>\n\n"
-        f"✅ Successfully sent to: {success_count} users\n"
-        f"❌ Failed to send to: {failed_count} users\n"
-        f"📊 Total users: {len(users)}"
-    )
-    
-    logger.info(f"Broadcast completed by admin: {user_id}. Success: {success_count}, Failed: {failed_count}")
+            return
+
+        if message.reply_to_message:
+            broadcast_text = message.reply_to_message.text or message.reply_to_message.caption
+        else:
+            broadcast_text = message.text.split(None, 1)[1]
+
+        if not broadcast_text:
+            await message.reply_text("Nothing to broadcast — the message has no text.")
+            return
+
+        targets = list(stats.known_users)
+        status = await message.reply_text(
+            f"📢 Broadcasting to {len(targets)} user(s)..."
+        )
+
+        sent, failed = 0, 0
+        for user_id in targets:
+            try:
+                await client.send_message(user_id, broadcast_text)
+                sent += 1
+            except RPCError:
+                failed += 1
+            except Exception as exc:  # noqa: BLE001
+                failed += 1
+                log.warning(f"Broadcast failed for a user: {type(exc).__name__}")
+            await asyncio.sleep(0.05)  # gentle pacing to avoid flood limits
+
+        await status.edit_text(
+            f"📢 Broadcast complete.\n✅ Sent: {sent}\n❌ Failed: {failed}"
+        )
