@@ -1,64 +1,34 @@
 """
-Main entry point for the application
+Entrypoint.
+
+Runs a minimal Flask server (for Render's health check) on a background
+thread, and the Pyrogram bot on the main thread/event loop.
 """
 
-import asyncio
-import sys
-import os
-from app.bot import create_app
-from app.utils.logger import setup_logger
+import threading
+
 from app.config import Config
+from app.utils.logger import log
+from app.bot import create_bot
+from app.web.health import flask_app
 
-logger = setup_logger(__name__)
+
+def run_flask():
+    # threaded=True lets the health check respond even while the bot is busy.
+    flask_app.run(host="0.0.0.0", port=Config.PORT, threaded=True, use_reloader=False)
 
 
-async def main():
-    """Main entry point"""
-    try:
-        print("=" * 50)
-        print("🚀 Starting String Generator Bot")
-        print("=" * 50)
-        
-        # Check environment variables
-        print("\n📋 Checking Environment Variables:")
-        print(f"BOT_TOKEN: {'✅ Set' if Config.BOT_TOKEN else '❌ MISSING'}")
-        print(f"ADMIN_IDS: {Config.ADMIN_IDS if Config.ADMIN_IDS else '❌ MISSING'}")
-        print(f"API_ID: {Config.API_ID}")
-        print(f"API_HASH: {'✅ Set' if Config.API_HASH else '❌ MISSING'}")
-        print(f"LOG_LEVEL: {Config.LOG_LEVEL}")
-        print("=" * 50)
-        
-        # Check if BOT_TOKEN is set
-        if not Config.BOT_TOKEN:
-            print("\n❌ ERROR: BOT_TOKEN is required!")
-            print("Please set BOT_TOKEN in environment variables.")
-            sys.exit(1)
-        
-        if not Config.ADMIN_IDS:
-            print("\n⚠️ WARNING: No ADMIN_IDS set!")
-            print("Admin commands will not work.")
-        
-        # Create and run bot
-        print("\n✅ Starting bot...")
-        bot = create_app()
-        await bot.run()
-        
-    except KeyboardInterrupt:
-        print("\n⏹️ Bot stopped by user")
-    except Exception as e:
-        print(f"\n❌ Fatal error: {e}")
-        import traceback
-        traceback.print_exc()
-        sys.exit(1)
+def main():
+    Config.validate()
+
+    flask_thread = threading.Thread(target=run_flask, daemon=True)
+    flask_thread.start()
+    log.info(f"Health check server started on port {Config.PORT}")
+
+    bot = create_bot()
+    log.info("Starting Telegram bot...")
+    bot.run()
 
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print("\n⏹️ Bot stopped by user")
-    except Exception as e:
-        print(f"\n❌ Unexpected error: {e}")
-        import traceback
-        traceback.print_exc()
-        sys.exit(1)
+    main()
