@@ -42,8 +42,8 @@ class Config:
     HOST = os.getenv("HOST", "0.0.0.0")
     
     # API Configuration
-    API_ID = os.getenv("API_ID", "6")
-    API_HASH = os.getenv("API_HASH", "your_api_hash_here")
+    API_ID = int(os.getenv("API_ID"))
+API_HASH = os.getenv("API_HASH")
     
     @classmethod
     def is_admin(cls, user_id: int) -> bool:
